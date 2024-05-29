@@ -5,10 +5,11 @@ block content
   
   doctype html    
 
-  h2 agent data
+  h2 agent definition data
   table(style='width:100%', border='1')
     tr
       th agent_id
+      th name
       th joined
       th left
       th email
@@ -27,6 +28,7 @@ block content
       each n in agents
         tr
           td= n.agent_uuid.slice(0, 10)
+          td= n.name
           td= dateFormatter.format(n.date_joined) 
           //td= dateFormatter.format(n.date_left)
           td= n.date_left
@@ -39,19 +41,74 @@ block content
           td= n.email
           td= n.state
 
-
-
-  h2 conversations data
+  h2 transactional AGENT data
   table(style='width:100%', border='1')
     tr
-      th conv_id
+      th agent_uuid
       th kind
-      th seg_id
-      th res_sid
       th date
       th time
       th activity 
       th activity_time
+
+    if (conversations.length == 0)
+      h3 no data yet...
+    else
+      each n in conversations
+          if (n.segment_kind == "AGENT STATUS IN PROGRESS" || n.segment_kind == 'AGENT STATUS')
+            tr
+              td= n.conversation_id.slice(0, 10)
+              td= n.segment_kind
+              td= dateFormatter.format(n.date)
+              td= timeFormatter.format(n.time)
+              td= n.activity
+              td= n.activity_time
+
+
+  h2 transactional QUEUE data
+  table(style='width:100%', border='1')
+    tr
+      th conv_id
+      th kind
+      th queue
+      th date
+      th time
+      th aband
+      th aband_phase
+      th aband_time
+      th queue_time
+      th ring_time
+
+
+    if (conversations.length == 0)
+      h3 no data yet...
+    else
+      each n in conversations
+        if (n.segment_kind == "QUEUE IN PROGRESS" || n.segment_kind == 'QUEUE')
+          tr
+            td= n.conversation_id.slice(0, 10)
+            td= n.segment_kind
+            td= n.queue
+            td= dateFormatter.format(n.date)
+            td= timeFormatter.format(n.time)
+            td= n.abandoned
+            td= n.abandoned_phase
+            td= n.abandon_time
+            td= n.queue_time
+            td= n.ring_time
+
+
+
+  h2 conversations handling data
+  table(style='width:100%', border='1')
+    tr
+      th conv_id
+      th kind
+      th queue
+      th seg_id
+      th res_sid
+      th date
+      th time
       th aband
       th aband_phase
       th aband_time
@@ -59,24 +116,80 @@ block content
       th ring_time
       th talk_time
       th wrapup_time
+      
 
     if (conversations.length == 0)
       h3 no data yet...
     else
       each n in conversations
-        tr
-          td= n.conversation_id.slice(0, 10)
-          td= n.segment_kind
-          td= n.segment_external_id.slice(0, 10)
-          td= n.reservation_sid.slice(0,10)
-          td= dateFormatter.format(n.date)
-          td= timeFormatter.format(n.time)
-          td= n.activity
-          td= n.activity_time
-          td= n.abandoned
-          td= n.abandoned_phase
-          td= n.abandon_time
-          td= n.queue_time
-          td= n.ring_time
-          td= n.talk_time
-          td= n.wrapup_time
+        if (n.segment_kind != "QUEUE IN PROGRESS" && n.segment_kind != "QUEUE" && n.segment_kind != "AGENT STATUS" && n.segment_kind != "AGENT STATUS IN PROGRESS")
+          tr
+            td= n.conversation_id.slice(0, 10)
+            td= n.segment_kind
+            td= n.queue
+            td= n.segment_external_id.slice(0, 10)
+            td= n.reservation_sid.slice(0,10)
+            td= dateFormatter.format(n.date)
+            td= timeFormatter.format(n.time)
+            td= n.abandoned
+            td= n.abandoned_phase
+            td= n.abandon_time
+            td= n.queue_time
+            td= n.ring_time
+            td= n.talk_time
+            td= n.wrapup_time
+
+
+  h3 Calls in Queue
+  table(style='width:100%', border='1')
+    tr
+      th CID & Account Name
+      th Queue
+      th Waiting
+      th Details
+
+    if (conversations.length == 0)
+      h3 no data yet...
+    else
+      each n in conversations
+        if (n.segment_kind == "QUEUE IN PROGRESS")
+          tr
+            td= n.source
+            td= n.queue
+            td= ((new Date()) - (new Date(n.time)))
+            td= "test"
+
+
+  h3 Agents 
+  table(style='width:100%', border='1')
+    tr 
+      th Agent Name
+      th Role
+      th State & Direction 
+      th Time 
+      th CID
+      th Channel 
+      th Queue 
+
+      if (conversations.length == 0 || agents.length == 0)
+        h3 no data yet...
+      else
+        each n in conversations
+          - var agent = agents.find(x => x.agent_uuid == n.agent_uuid);
+          - var conversation = conversations.find(x => x.agent_uuid == n.agent_uuid && x.segment_kind == 'CONVERSATION IN PROGRESS');
+          - var transfer = conversation ? conversations.find(x => x.preceded_by == conversation.segment_external_id && x.segment_kind == 'QUEUE IN PROGRESS') : null;
+          - var transfer_message = (transfer && n.activity != 'ACW') ? ", transfer in progress" : ""
+          - var direction = conversation ? ": " + conversation.direction : ""
+          - var channel = conversation ? conversation.channel : ""
+          - var queue = conversation ? conversation.queue : ""
+          - var cid = conversation ? conversation.cid : ""
+          if (n.segment_kind == "AGENT STATUS IN PROGRESS" && n.activity != 'Offline')
+            tr
+              td= agent.name
+              td= agent.department_name
+              td= (n.activity + direction + transfer_message)
+              td= ((new Date()) - (new Date(n.time)))
+              td= cid
+              td= channel
+              td= queue
+

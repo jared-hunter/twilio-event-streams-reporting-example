@@ -25,6 +25,7 @@ const ERROR_LOGGING_AGENT = "Unexpected error logging agent: %s";
 
 // Segment types
 const QUEUE_SEGMENT = "QUEUE";
+const QUEUE_IN_PROG = "QUEUE IN PROGRESS"
 const CONVO_SEG = "CONVERSATION";
 const CONVO_IN_PROG_SEG = "CONVERSATION IN PROGRESS";
 const CONVO_CORRUPTED = "CORRUPTED CONVERSATION"; //TO-DO
@@ -39,6 +40,7 @@ const TASKROUTER = 'com.twilio.taskrouter';
 
 // EVENT TYPES
 const ET_TASK_QUEUE_ENTERED = "task-queue.entered";
+const ET_TASK_QUEUE_MOVED = "task-queue.moved";
 const ET_TASK_TRANSFER_INITIATED = "task.transfer-initiated";
 const ET_RESERVATION_CREATED = "reservation.created";
 const ET_RESERVATION_ACCEPTED = "reservation.accepted";
@@ -143,6 +145,16 @@ const getAgentStatusInProgressSegment = (agent_uuid) => {
       .data()[0]
   } catch (err) {
     console.error(ERROR_FETCHING_DATA, agent_uuid, err);
+  }
+}
+
+const getQueueInProgressSegment = (segment_external_id) => {
+  try {
+    return conversations.chain()
+      .find({ segment_external_id, "segment_kind": QUEUE_IN_PROG })
+      .data()[0]
+  } catch (err) {
+    console.error(ERROR_FETCHING_DATA, segment_external_id, err);
   }
 }
 
@@ -291,7 +303,8 @@ const generateAgentEntry = (currentEvent) => {
     manager: worker_attributes.manager,
     department_id: worker_attributes.department_id,
     department_name: worker_attributes.department_name,
-    department_name_in_hierarchy: worker_attributes.department_name_in_hierarchy
+    department_name_in_hierarchy: worker_attributes.department_name_in_hierarchy,
+    name: worker_attributes.full_name
   }
 }
 
@@ -333,6 +346,25 @@ const updateAgentStatusInProgressSegment = (segment, agent_uuid) => {
   }
 }
 
+const updateQueueInProgressSegment = (segment, segment_external_id) => {
+  try {
+
+    const queue_in_prog = getQueueInProgressSegment(segment_external_id);
+    const updated_queue_seg = {
+      ...queue_in_prog,
+      ...segment
+    }
+    logConversation(conversations.update(updated_queue_seg));
+  } catch (err) {
+    if(err.message?.includes("Please save the document first by using insert()")){
+      logConversation("Looks like conversation entry does not exist for updating, perhaps session started after original entity was written");
+    }
+    else{
+      console.error(ERROR_LOGGING_CONVERSATION, err);
+    }
+  }
+}
+
 // method for transforming data common to all segment types
 const generateDefaultSegmentWithCustomData = (currentEvent) => {
   var {
@@ -353,7 +385,12 @@ const generateDefaultSegmentWithCustomData = (currentEvent) => {
   var custom_data = {
     ...task_attributes?.conversations,
     ...worker_attributes
+  };
+
+  var accountInfo = {
+    ...task_attributes?.accountInfo
   }
+
   return segment_data = {
     // required elements
     conversation_id: custom_data?.conversation_id || task_sid || worker_sid || uuid(),
@@ -481,6 +518,9 @@ const generateDefaultSegmentWithCustomData = (currentEvent) => {
     workflow: custom_data?.workflow || workflow_name,
     //#endregion
 
+    //#region custom extenstions to flex insights data model
+    cid: accountInfo.CID
+    //#endregion
   }
 }
 
@@ -501,7 +541,7 @@ const cacheTaskRouterEvent = (event) => {
 }
 
 // Parse each individual event in the array
-const parseEventStreamsCloudEvent = (req, event, index, array) => {
+const parseEventStreamsCloudEvent = async (req, event, index, array) => {
   try {
     logCloudEvent(event, index);
 
@@ -511,10 +551,39 @@ const parseEventStreamsCloudEvent = (req, event, index, array) => {
 
       var { eventtype } = currentEvent.payload;
       switch (eventtype) {
+        case ET_TASK_QUEUE_ENTERED:
+          // prepare a queue in progress segment (this doesnt exist in flex insights)
+          var queue_in_progress_segment = {
+            segment_kind: QUEUE_IN_PROG,
+          }
+          insertConversationSegment(queue_in_progress_segment, currentEvent);
+
+          break;
+
+        case ET_TASK_QUEUE_MOVED:
+          // workaround to deal with events out of order 
+          // in lieu of a message queue
+          await new Promise(r => setTimeout(r, 2000));
+          var queueData = getQueueDataForExitEvent(currentEvent);
+          var { resource_sid } = currentEvent.payload;
+
+          // prepare the queue segment
+          var queue_segment = {
+            segment_kind: QUEUE_SEGMENT,
+            queue_time: queueData.timeInQueue,
+            date: queueData.startDate,
+            time: queueData.startDate
+          }
+
+          updateQueueInProgressSegment(queue_segment, resource_sid);
+          break;
+
+          // update previous moved from queue
         case ET_RESERVATION_ACCEPTED:
           // calculate the stats
           var queueData = getQueueDataForExitEvent(currentEvent);
           var ring_time = getRingTimeForEvent(currentEvent);
+          var { task_sid } = currentEvent.payload;
 
           // prepare the queue segment
           var queue_segment = {
@@ -532,7 +601,7 @@ const parseEventStreamsCloudEvent = (req, event, index, array) => {
           }
 
           // write segments to conversation table
-          insertConversationSegment(queue_segment, currentEvent);
+          updateQueueInProgressSegment(queue_segment, task_sid);
           insertConversationSegment(convo_in_progress_segment, currentEvent);
 
           break;
@@ -590,6 +659,7 @@ const parseEventStreamsCloudEvent = (req, event, index, array) => {
         case ET_TASK_TRANSFER_FAILED:
           // calculate the stats
           var queueData = getQueueDataForExitEvent(currentEvent);
+          var { resource_sid } = currentEvent.payload;
 
           // prepare the queue segment
           var queue_segment = {
@@ -613,7 +683,7 @@ const parseEventStreamsCloudEvent = (req, event, index, array) => {
           }
 
           // write segments to conversation table
-          insertConversationSegment(queue_segment, currentEvent);
+          updateQueueInProgressSegment(queue_segment, resource_sid);
           insertConversationSegment(conversation, currentEvent)
           break;
         case ET_WORKER_CREATED:
@@ -675,10 +745,10 @@ const parseEventStreamsCloudEvent = (req, event, index, array) => {
 }
 
 // Process the full body of an event sent to the events endpoint
-const processRequest = (req, res, next) => {
+const processRequest = async (req, res, next) => {
   if (Array.isArray(req.body)) {
-    req.body.forEach((event, index, array) => {
-      parseEventStreamsCloudEvent(req, event, index, array);
+    await req.body.forEach(async (event, index, array) => {
+      await parseEventStreamsCloudEvent(req, event, index, array);
     });
   } else {
     console.error(INVALID_REQUEST_ERROR);

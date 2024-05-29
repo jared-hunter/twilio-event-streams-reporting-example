@@ -1,0 +1,82 @@
+extends layout
+
+block content
+  h1= title
+  
+  doctype html    
+
+  h2 agent data
+  table(style='width:100%', border='1')
+    tr
+      th agent_id
+      th joined
+      th left
+      th email
+      th external_id
+      th roles
+      th team_name
+      th department_name
+      th manager
+      th email
+      th status
+
+
+    if (agents.length == 0)
+      h3 no data yet...
+    else
+      each n in agents
+        tr
+          td= n.agent_uuid.slice(0, 10)
+          td= dateFormatter.format(n.date_joined) 
+          //td= dateFormatter.format(n.date_left)
+          td= n.date_left
+          td= n.email
+          td= n.agent_id
+          td= n.role
+          td= n.team_name
+          td= n.department_name
+          td= n.manager
+          td= n.email
+          td= n.state
+
+
+
+  h2 conversations data
+  table(style='width:100%', border='1')
+    tr
+      th conv_id
+      th kind
+      th seg_id
+      th res_sid
+      th date
+      th time
+      th activity 
+      th activity_time
+      th aband
+      th aband_phase
+      th aband_time
+      th queue_time
+      th ring_time
+      th talk_time
+      th wrapup_time
+
+    if (conversations.length == 0)
+      h3 no data yet...
+    else
+      each n in conversations
+        tr
+          td= n.conversation_id.slice(0, 10)
+          td= n.segment_kind
+          td= n.segment_external_id.slice(0, 10)
+          td= n.reservation_sid.slice(0,10)
+          td= dateFormatter.format(n.date)
+          td= timeFormatter.format(n.time)
+          td= n.activity
+          td= n.activity_time
+          td= n.abandoned
+          td= n.abandoned_phase
+          td= n.abandon_time
+          td= n.queue_time
+          td= n.ring_time
+          td= n.talk_time
+          td= n.wrapup_time
